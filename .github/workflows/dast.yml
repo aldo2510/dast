@@ -12,7 +12,7 @@ on:
       allow_active_scan:
         description: 'Ejecutar full (active) scan? true/false'
         required: false
-        default: 'false'
+        default: 'true'
 
 env:
   DEFAULT_TARGET: 'http://demo.testfire.net'
@@ -37,8 +37,8 @@ jobs:
         run: |
           echo "Running ZAP baseline against $TARGET_URL"
           docker run --rm -v "$GITHUB_WORKSPACE/zap_reports":/zap/wrk/:rw \
-            $ZAP_IMAGE zap-baseline.py \
-            -t "${TARGET_URL}" -r /zap/wrk/baseline.html -J /zap/wrk/baseline.json -d
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t "${TARGET_URL}" -r baseline.html -J baseline.json -d
 
       - name: Upload baseline report
         uses: actions/upload-artifact@v4
@@ -65,8 +65,9 @@ jobs:
         run: |
           echo "Running ZAP full scan (ACTIVE) against $TARGET_URL"
           docker run --rm -v "$GITHUB_WORKSPACE/zap_reports":/zap/wrk/:rw \
-            $ZAP_IMAGE zap-full-scan.py \
-            -t "${TARGET_URL}" -r /zap/wrk/full.html -J /zap/wrk/full.json -I
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-full-scan.py -t "${TARGET_URL}" -r full.html -J full.json -I
+
 
       - name: Upload full scan report
         uses: actions/upload-artifact@v4
