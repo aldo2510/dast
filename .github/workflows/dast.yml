@@ -1,0 +1,105 @@
+name: ZAP separate jobs - baseline + full scan
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'URL objetivo (ej: http://demo.testfire.net)'
+        required: false
+        default: 'http://demo.testfire.net'
+      allow_active_scan:
+        description: 'Permitir active scan (Peligroso - solo usar si confirmas permiso). true/false'
+        required: false
+        default: 'false'
+
+env:
+  # Valor por defecto, puede ser sobrescrito por inputs en workflow_dispatch
+  DEFAULT_TARGET: 'http://demo.testfire.net'
+
+jobs:
+  baseline:
+    name: ZAP Baseline (passive - safe)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set TARGET_URL
+        run: |
+          echo "TARGET_URL=${{ github.event.inputs.target_url || env.DEFAULT_TARGET }}" >> $GITHUB_ENV
+
+      - name: Create reports dir
+        run: mkdir -p "$GITHUB_WORKSPACE/zap_reports"
+
+      - name: Run ZAP baseline (passive)
+        run: |
+          echo "Running ZAP baseline against $TARGET_URL"
+          docker run --rm -v "$GITHUB_WORKSPACE/zap_reports":/zap/wrk/:rw owasp/zap2docker-weekly \
+            zap-baseline.py -t "${TARGET_URL}" -r /zap/wrk/baseline.html -J /zap/wrk/baseline.json -d
+
+      - name: Upload baseline report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-baseline-report
+          path: zap_reports/baseline.*
+
+  full-scan:
+    name: ZAP Full Scan (active) - ENABLE MANUALLY
+    runs-on: ubuntu-latest
+    # Only run if workflow_dispatch input allow_active_scan == 'true'
+    if: ${{ github.event.inputs.allow_active_scan == 'true' }}
+    needs: baseline
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set TARGET_URL
+        run: |
+          echo "TARGET_URL=${{ github.event.inputs.target_url || env.DEFAULT_TARGET }}" >> $GITHUB_ENV
+
+      - name: Create reports dir
+        run: mkdir -p "$GITHUB_WORKSPACE/zap_reports"
+
+      - name: WARNING - Active scan
+        run: |
+          echo "=================================================================="
+          echo "You enabled active scanning. Only run this if you have explicit permission"
+          echo "Target: $TARGET_URL"
+          echo "=================================================================="
+
+      - name: Run ZAP full scan (ACTIVE)
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE/zap_reports":/zap/wrk/:rw owasp/zap2docker-weekly \
+            zap-full-scan.py -t "${TARGET_URL}" -r /zap/wrk/full.html -J /zap/wrk/full.json -I
+
+      - name: Upload full scan report
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-full-report
+          path: zap_reports/full.*
+
+      - name: Fail if HIGH/CRITICAL alerts found
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+          FILE="$GITHUB_WORKSPACE/zap_reports/full.json"
+          if [ ! -f "$FILE" ]; then
+            echo "No se encontró full.json — saltando check."
+            exit 0
+          fi
+          COUNT=$(jq '[.site[].alerts[] | select(.risk == "High" or .risk == "Critical")] | length' "$FILE")
+          echo "High/Critical alerts found: $COUNT"
+          if [ "$COUNT" -gt 0 ]; then
+            echo "Hay alertas HIGH/CRITICAL — fallando el job deliberadamente."
+            exit 1
+          fi
+          echo "No se encontraron alertas High/Critical."
+
+      - name: Upload all reports (backup)
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-all-reports
+          path: zap_reports/**
+
